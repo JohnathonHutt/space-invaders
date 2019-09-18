@@ -1,0 +1,19 @@
+
+* {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  text-align: center;
+}
+
+h1 {
+  color: blue;
+}
+
+canvas {
+  border: 1px solid yellow;
+  background-color: black;
+  margin: 0 auto;
+}
