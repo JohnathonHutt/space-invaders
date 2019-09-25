@@ -1,7 +1,15 @@
 //jshint esversion:6
 
+//constants and variables
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
+
+//images
+const alienShip = new Image();
+alienShip.src = "images/alienShip.png";
+
+const background = new Image();
+background.src = "images/pixelStarScape.png";
 
 const shipSprite = new Image();
 shipSprite.src = "images/ship64.png";
@@ -19,10 +27,15 @@ const ship = {
 
 const lasers = [];
 let aliens = [];
+const alienLasers = [];
 
 let counter = 0;
 let frameRate = 60 / 4;
 let frame = 1;
+let explFrame = 1;
+let alienShipFrame = 0;
+
+let isAlienShipOut = false;
 
 const scale = 1;
 const w = 32;
@@ -30,56 +43,62 @@ const h = 32;
 const scaledW = scale * w;
 const scaledH = scale * h;
 
+//game state
+const gst = {
+  lives: 3,
+  score: 0,
+  isGameOver: false,
+  round: 1
+};
+
+const alien = {
+  colCount: 9,
+  rowCount: 4,
+  totAliens: 9 * 4,
+  h: 20,
+  w: 32,
+  pTop: 18,
+  pSides: 6,
+  offSetTop: 12,
+  offSetLeft: 18,
+  speedX: 17,
+  speedY: 60
+};
+
+const shield = {
+  // isActive: true,
+  status: 3,
+  x: 218,
+  y: canvas.height - 76 - 12,
+  w: 64,
+  h: 12,
+  color: ['rgb(220, 220, 255)', 'rgb(120, 120, 255)', 'rgb(0, 0, 255)']
+};
+
+//alien mother ship
+let motherShip = {
+  isOut: false,
+  isInitialized: false,
+  status: 3
+};
+
+let initializedThisRound = false;
+
+let mShipBombingPatterns = {
+  3: [100, 300, 400],
+  4: [40, 252, 320, 430],
+  5: [44, 68, 92, 408, 432],
+  6: [40, 240, 252, 290, 330, 370]
+};
+
+let bombs = [];
+
+//event handlers
 document.addEventListener('keydown', keyDownHandler, false);
 document.addEventListener('keyup', keyUpHandler, false);
 
 let rPressed = false;
 let lPressed = false;
-
-// function ShieldObjGenerator() {
-//   this.h = 10;
-//   this.w = 12;
-//   this.x = 0;
-//   this.y = 0;
-//   this.colNumber = 3;
-//   this.rowNumber = 6;
-//   this.color = "white";
-//   this.status = 1;
-//   this.totW = this.w * this.rowNumber;
-//   this.totH = this.h * this.colNumber;
-//   //call on top
-// }
-//
-// function makeNewShield(canvasX, canvasY) {
-//   let shObj = new ShieldObjGenerator();
-//   let shield = [];
-//   for (let c = 0; c < shObj.colNumber; c++) {
-//     shield[c] = [];
-//     for (let r = 0; r < shObj.rowNumber; r++) {
-//       shield[c][r] = new ShieldObjGenerator();
-//       shield[c][r].x = r * shObj.w + canvasX;
-//       shield[c][r].y = c * shObj.h + canvasY;
-//     }
-//   }
-//   return shield;
-// }
-//
-// function drawShield(shield) {
-//   for (let c = 0; c < shield[0][0].colNumber; c++) {
-//     for (let r = 0; r < shield[0][0].rowNumber; r++) {
-//       let s = shield[c][r];
-//       console.log(s);
-//       if (s.status > 0) {
-//         ctx.beginPath();
-//         ctx.rect(s.x, s.y, s.w, s.h);
-//         ctx.fillStyle = s.color;
-//         ctx.fill();
-//         ctx.closePath();
-//       }
-//     }
-//   }
-// }
-
 
 function keyDownHandler(e) {
   switch (e.keyCode) {
@@ -113,142 +132,399 @@ function keyUpHandler(e) {
   }
 }
 
-function checkR() {
-  if (rPressed) {
-    if (ship.x + 64 >= canvas.width) {
-      ship.x = canvas.width - 64;
-    } else {
-      ship.x += 4;
-    }
-  }
-}
-
-function checkL() {
-  if (lPressed) {
-    if (ship.x <= 0) {
-      ship.x = 0;
-    } else {
-      ship.x -= 4;
-    }
-  }
-}
-
-function drawShip() {
-  ctx.drawImage(shipSprite, ship.x, ship.y);
-}
-
 function newLaser() {
+  if (shield.status > 0) {
+    if (ship.x+30 < shield.x || ship.x+30 > shield.x + shield.w) {
+      fireLaser();
+    }
+  } else {
+    fireLaser();
+  }
+}
+
+function fireLaser() {
+  //newLaser helper functions
   lasers.unshift({
     x: ship.x + 30,
     y: ship.y,
     w: 4,
     h: 8
   });
+  playSound('laser.m4a');
 }
 
-function moveLasers() {
+function populateAlienArr(x, y) {
+  //populates global aliens array w/ alien objects - called once
+  //accesses global aliens array
+  //set x and y for later uses when aliens start offscreen
+  if (!motherShip.isInitialized) {
+    let alienX = x + alien.offSetLeft;
+    let alienY = y + alien.offSetTop;
+    for (let i = 0; i < alien.totAliens; i++) {
+      aliens.push({
+        x: alienX,
+        y: alienY,
+        status: 2,
+        expl: 20,
+        dir: 'r',
+      });
+      if ((i + 1) % alien.colCount === 0) {
+        alienX = alien.offSetLeft;
+        alienY += (alien.h + alien.pTop);
+      } else {
+        alienX += (alien.w + alien.pSides);
+      }
+    }
+  }
+}
+
+populateAlienArr(0, 0);
+
+//functions used in update()
+function newAlienLaser() {
+  let rand = Math.random();
+  if (rand > 0.8) {
+    if (aliens.length > 0) {
+      let num;
+      (aliens.length < 8) ? num = aliens.length: num = 8;
+      let random = Math.floor(Math.random() * num);
+      // console.log(random);
+      let firingAlien = aliens[aliens.length - (random + 1)];
+      // console.log(firingAlien);
+      alienLasers.push({
+        x: firingAlien.x,
+        y: firingAlien.y,
+        w: 4,
+        h: 8
+      });
+      playSound('fire.wav');
+    }
+  }
+}
+
+function increaseAlienSpeed() {
+  alien.speedX += 2;
+  alien.speedY += 2;
+}
+
+function moveShip(dt) {
+  //check right
+  if (rPressed) {
+    if (ship.x + 64 >= canvas.width) {
+      ship.x = canvas.width - 64;
+    } else {
+      ship.x += 60 / dt;
+    }
+  }
+  //check left
+  if (lPressed) {
+    if (ship.x <= 0) {
+      ship.x = 0;
+    } else {
+      ship.x -= 60 / dt;
+    }
+  }
+}
+
+function moveAliens(dt) {
+  //looks for aliens close to edges - changes directions if close
+  if (dt > 0) {
+    let nearAnEdge = false;
+    for (let i = 0; i < aliens.length; i++) {
+      //iterate through aliens array check if any are near edge
+      if (aliens[i].x + 33 >= canvas.width || aliens[i].x <= 1) {
+        nearAnEdge = true;
+        break;
+      }
+    }
+    //if near edge switch dir + move, else just move
+    if (nearAnEdge) {
+      for (let j = 0; j < aliens.length; j++) {
+        if (aliens[j].status > 0) {
+          //change directions
+          (aliens[j].dir === 'r') ? aliens[j].dir = 'l': aliens[j].dir = 'r';
+          //move aliens/drop down
+          if (aliens[j].dir === 'r') {
+            aliens[j].x += alien.speedX / dt;
+            aliens[j].y += alien.speedY / dt;
+            //fix to stop aliens from getting trapped by the wall
+            if (aliens[j].x <= 1) {
+              aliens[j].x = 2;
+            }
+          } else if (aliens[j].dir === 'l') {
+            aliens[j].x -= alien.speedX / dt;
+            aliens[j].y += alien.speedY / dt;
+            if (aliens[j].x + 33 >= canvas.width) {
+              aliens[j].x = canvas.width - 34;
+            }
+          }
+        }
+      }
+    } else {
+      for (let k = 0; k < aliens.length; k++) {
+        if (aliens[k].status > 0) {
+          // (aliens[k].dir === 'r') ? aliens[k].x += 1: aliens[k].x -= 1;
+          if (aliens[k].dir === 'r') {
+            aliens[k].x += alien.speedX / dt;
+          } else {
+            aliens[k].x -= alien.speedX / dt;
+          }
+        }
+      }
+    }
+  }
+}
+
+function moveLasers(dt) {
   for (let i = 0; i < lasers.length; i++) {
     if (lasers[i].y < 0) {
       lasers.splice(i, 1);
     } else {
-      lasers[i].y -= 4;
+      lasers[i].y -= 65 / dt;
     }
   }
 }
 
-// function moveBricks() {
-//   alien.moveCount += 1;
-//   if (alien.moveCount % 10 === 0) {
-//     if (alien.dir === 'r') {
-//       alien.offSetLeft += 4;
-//       if (alien.offSetLeft === 26) {
-//         alien.dir = 'l';
-//         alien.offSetTop += alien.dropSpeed;
-//       }
-//     } else if (alien.dir === 'l') {
-//       alien.offSetLeft -= 4;
-//       if (alien.offSetLeft === 6) {
-//         alien.dir = 'r';
-//         alien.offSetTop += alien.dropSpeed;
-//       }
-//     }
-//   }
-// }
+function moveAlienLasers(dt) {
+  for (let i = 0; i < alienLasers.length; i++) {
+    if (alienLasers[i].y > canvas.height) {
+      alienLasers.splice(i, 1);
+    } else {
+      alienLasers[i].y += 50 / dt;
+    }
+  }
+}
 
-//figure out how to make them look for each other
-//or just get them to not bunch up
-// function moveAliens() {
-//   //for 2D artray - has issues
-//   alien.moveCount += 1;
-//   if (alien.moveCount % 10 === 0) {
-//     //move every 10 frames
-//     for (let i = 0; i < aliens.length; i++) {
-//       //check if last alien in row is near the edge - switch directions
-//       if (aliens[i][aliens[i].length - 1].x + 36 >= canvas.width || aliens[i][0].x - 4 <= 0) {
-//         for (let j = 0; j < aliens[i].length; j++) {
-//           (aliens[i][j].dir === 'r') ? aliens[i][j].dir = 'l': aliens[i][j].dir = 'r';
-//           //add appropriate x +/- and add dropspeed to y
-//           (aliens[i][j].dir === 'r') ? aliens[i][j].x += aliens[i][j].speedX: aliens[i][j].x -= aliens[i][j].speedX;
-//         }
-//       } else {
-//         for (let k = 0; k < aliens[i].length; k++) {
-//           (aliens[i][k].dir === 'r') ? aliens[i][k].x += aliens[i][k].speedX: aliens[i][k].x -= aliens[i][k].speedX;
-//         }
-//       }
-//     }
-//   }
-// }
+function alienCollisionDetection() {
+  for (let i = 0; i < lasers.length; i++) {
+    let l = lasers[i];
+    //check motherShip collision if ship is out and if laser is at bottom of ship
+    if (motherShip.isInitialized && l.y < 64) {
+      if (l.x > motherShip.x && l.x < motherShip.x + 64) {
 
-// function moveAliens() {
-//   alien.moveCount += 1;
-//   if (alien.moveCount % 10 === 0) {
-//     //move every 10 frames
-//     for (let i = 0; i < aliens.length; i++) {
-//       //check if last alien in row is near the edge - switch directions
-//       if (aliens[i].x + 36 >= canvas.width || aliens[i].x - 4 <= 0) {
-//         for (let j = 0; j < aliens.length; j++) {
-//           (aliens[j].dir === 'r') ? aliens[j].dir = 'l': aliens[j].dir = 'r';
-//           //add appropriate x +/- and add dropspeed to y
-//           (aliens[j].dir === 'r') ? aliens[j].x += aliens[j].speedX: aliens[j].x -= aliens[j].speedX;
-//         }
-//         break;
-//       } else {
-//         for (let k = 0; k < aliens[i].length; k++) {
-//           (aliens[k].dir === 'r') ? aliens[k].x += aliens[i][k].speedX: aliens[i][k].x -= aliens[i][k].speedX;
-//         }
-//       }
-//     }
-//   }
-// }
-
-function moveAliens() {
-  let nearAnEdge = false;
-  for (let i = 0; i < aliens.length; i++) {
-    //iterate through aliens array check if any are near edge
-    if (aliens[i].x + 36 >= canvas.width || aliens[i].x - 4 <= 0) {
-      nearAnEdge = true;
+        lasers.splice(i, 1);
+        motherShip.status--;
+        console.log('You hit the motherShip');
+        if (motherShip.status < 1) {
+          gst.score += 100;
+          motherShip.isInitialized = false;
+          if (gst.round % 2 == 0) {
+            gst.lives++;
+            playSound('extraGuy.wav');
+          }
+        }
+      }
       break;
     }
-  }
-  //if near edge switch dir + move, else just move
-  if (nearAnEdge) {
-    for (let j = 0; j < aliens.length; j++) {
-      (aliens[j].dir === 'r') ? aliens[j].dir = 'l': aliens[j].dir = 'r';
-      //add appropriate x +/- and add dropspeed to y
-      (aliens[j].dir === 'r') ? aliens[j].x += aliens[j].speedX: aliens[j].x -= aliens[j].speedX;
-      aliens[j].y += aliens[j].speedY;
-    }
-  } else {
-    for (let k = 0; k < aliens.length; k++) {
-      (aliens[k].dir === 'r') ? aliens[k].x += aliens[k].speedX: aliens[k].x -= aliens[k].speedX;
+    if (aliens.length > 0) {
+      if (l.y <= aliens[aliens.length - 1].y + alien.h) {
+        for (let j = 0; j < aliens.length; j++) {
+          if (aliens[j].status > 0 && lasers[i].y >= aliens[j].y && lasers[i].y <= aliens[j].y + alien.h && lasers[i].x + 4 >= aliens[j].x && lasers[i].x <= aliens[j].x + alien.w) {
+            if (aliens[j].status === 2) {
+              lasers.splice(i, 1);
+              aliens[j].status--;
+              break;
+            } else if (aliens[j].status === 1) {
+              lasers.splice(i, 1);
+              aliens[j].status -= 1;
+              gst.score += 10;
+              //increment alien speed with each alien
+              increaseAlienSpeed();
+              playSound('invaderkilled.wav');
+              //activate motherShip
+              if (aliens.length < 8 && !initializedThisRound) {
+                //initialize motherShip
+                initializeMotherShip();
+              }
+              break;
+            } else if (aliens[j].status === 0) {
+              //if status is 0, alien stops moving and goes through 20 cycles of explosion animation
+              console.log(aliens[j]);
+              if (aliens[j].expl === 0) {
+                aliens[j].splice(j, 1);
+              } else {
+                aliens[j].expl -= 1;
+              }
+            }
+          }
+        }
+      }
     }
   }
 }
 
+function initializeMotherShip() {
+  //flag limits ship appearances to once / round
+  initializedThisRound = true;
+  //set isInitialized to true
+  let rand = Math.floor(Math.random()*(4))+3;
+  playSound('motherShip.wav');
+  if (rand%2 === 0) {
+    //move from l-r
+    motherShip = {
+      x: canvas.width,
+      status: 3,
+      bombPattern: mShipBombingPatterns[rand],
+      isInitialized: true,
+      dir: 'l',
+    };
+  } else {
+    //move from r-l
+    motherShip = {
+      x: -64,
+      status: 3,
+      bombPattern: mShipBombingPatterns[rand],
+      isInitialized: true,
+      dir: 'r',
+    };
+  }
+}
 
+function shipCollisionDetection() {
+  //first laser in arr is lowest/if higher than ship break/else check for collision
+  for (let i = 0; i < alienLasers.length; i++) {
+    //if shield is active and laser is over shield
+    if (shield.status > 0 && alienLasers[i].x + alienLasers[i].w > shield.x && alienLasers[i].x < shield.x + shield.w) {
+      if (alienLasers[i].y + alienLasers[i].h >= shield.y) {
+        alienLasers.splice(i, 1);
+      }
+    } else if (alienLasers[i].y < canvas.height - 65) {
+      break;
+    } else if (alienLasers[i].x + alienLasers[i].w >= ship.x && alienLasers[i].x <= ship.x + 64) {
+      gst.lives--;
+      if (gst.lives > 0) {
+        playSound('bangSmall.wav');
+      }
+      alienLasers.splice(i, 1);
+    }
+  }
+  if (gst.lives < 1) {
+    playSound('explosion.wav');
+  }
+}
+
+function bombCollisionDetection() {
+  if (bombs.length > 0) {
+    for (let i = 0; i < bombs.length; i++) {
+      if (shield.status > 0 && bombs[i].x + 10 > shield.x && bombs[i].x - 10 < shield.x + shield.w && bombs[i].y + 10 > shield.y) {
+        console.log('It hit the shield!');
+        playSound('bangLarge.wav');
+        bombs.splice(i, 1);
+        shield.status--;
+      } else if (bombs[i].y + 20 > ship.y && bombs[i].x + 10 > ship.x && bombs[i].x < ship.x + 64) {
+        console.log('It hit the ship');
+        playSound('bangSmall.wav');
+        bombs.splice(i, 1);
+        gst.lives--;
+      }
+    }
+  }
+}
+
+function gameOverScreen() {
+  //stop GAME
+  //figure out how
+  //add Game over text
+  gst.isGameOver = true;
+  ctx.font = "32px Arial";
+  ctx.fillStyle = "blue";
+  ctx.fillText("GAME OVER", 150, canvas.height / 2);
+  ctx.font = "28px Arial";
+  ctx.fillText("SCORE: " + gst.score, 170, canvas.height/2 + 34);
+  //hit a to restart
+  document.getElementById('canvas').addEventListener('click', restartGame);
+}
+
+function restartGame() {
+  //used in drawGameOver
+  document.location.reload();
+}
+
+function checkForGameOver() {
+  if (aliens.length !== 0) {
+    if (gst.lives <= 0 || aliens[aliens.length-1].y > canvas.height) { //possibly adjust height for alien getting to the bottom of the screen
+      gameOverScreen();
+    }
+  }
+}
+
+function checkForAliensCleared() {
+  //makes sure all aliens/mothership are cleared before incrementing round
+  if (aliens.length === 0 && !motherShip.isInitialized) {
+    gst.round += 1;
+    initializedThisRound = false;
+    alien.speedX = 20 + (10 * gst.round);
+    alien.speedY = 60 + (10 * gst.round);
+    populateAlienArr(0, -160);
+  }
+}
+
+function updateMotherShip() {
+  // console.log('x value: ' + motherShip.x);
+  // console.log('direction: ' + motherShip.dir);
+  if ((motherShip.x > -65 && motherShip.isInitialized) && (motherShip.x < canvas.width+1 && motherShip.isInitialized)) {
+    if (motherShip.dir === 'r') {
+      motherShip.x += 2;
+    } else {
+      motherShip.x -= 2;
+    }
+    //drop bombs
+    for (let i = 0; i < motherShip.bombPattern.length; i++) {
+      if (motherShip.bombPattern[i] === motherShip.x) {
+        bombs.push({
+          x: motherShip.x + 22,
+          y: 54
+        });
+      }
+    }
+  } else {
+    //off screen - turn off isInitialized
+    motherShip.isInitialized = false;
+  }
+}
+
+function moveBombs(dt) {
+  if (bombs.length > 0) {
+    for (let i = 0; i < bombs.length; i++) {
+      bombs[i].y += 100/dt;
+      if (bombs[i].y + 10 > canvas.height) {
+        bombs.splice(i, 1);
+      }
+    }
+  }
+}
+
+function update(dt) {
+  counter += 1;
+  if (counter % frameRate === 0) {
+    (frame === 9) ? frame = 0: frame += 1;
+    (explFrame == 1) ? explFrame = 0: explFrame += 1;
+    (alienShipFrame === 6) ? alienShipFrame = 0 : alienShipFrame += 1;
+    //increase speed based on number of aliens left
+    newAlienLaser();
+  }
+  moveShip(dt);
+  moveAliens(dt);
+  moveLasers(dt);
+  moveBombs(dt);
+  moveAlienLasers(dt);
+  alienCollisionDetection();
+  shipCollisionDetection();
+  bombCollisionDetection()
+  checkForGameOver();
+  checkForAliensCleared();
+  if (motherShip.isInitialized && motherShip.status > 0) {
+    updateMotherShip();
+  }
+}
+
+//drawGame functions
+function drawShip() {
+  ctx.drawImage(shipSprite, ship.x, ship.y);
+}
 
 function drawLasers() {
-  moveLasers();
+  //player lasers
   for (let i = 0; i < lasers.length; i++) {
     ctx.beginPath();
     ctx.rect(lasers[i].x, lasers[i].y, lasers[i].w, lasers[i].h);
@@ -256,89 +532,34 @@ function drawLasers() {
     ctx.fill();
     ctx.closePath();
   }
+  //alien lasers
+  for (let i = 0; i < alienLasers.length; i++) {
+    ctx.beginPath();
+    ctx.rect(alienLasers[i].x, alienLasers[i].y, alienLasers[i].w, alienLasers[i].h);
+    ctx.fillStyle = 'white';
+    ctx.fill();
+    ctx.closePath();
+  }
 }
 
-
 function drawAlien(frame, canvasX, canvasY) {
+  //used in draw aliens
   ctx.drawImage(alienImage, frame * w, 0, w, h, canvasX, canvasY, scaledW, scaledH);
 }
 
+function drawMotherShip(frame, canvasX) {
+  ctx.drawImage(alienShip, frame * w, 0, w, h, canvasX, 0, 64, 64);
+}
+
 function drawRedAlien(frame, canvasX, canvasY) {
+  //used in draw aliens
   ctx.drawImage(alienRedImage, frame * w, 0, w, h, canvasX, canvasY, scaledW, scaledH);
 }
 
 function drawExplosion(frame, canvasX, canvasY) {
-  //need to work in timing
+  //used in draw aliens
   ctx.drawImage(alienRedImage, frame * w, 32, w, h, canvasX, canvasY, scaledW, scaledH);
 }
-
-const alien = {
-  colCount: 8,
-  rowCount: 4,
-  totAliens: 8 * 4,
-  h: 12,
-  w: 32,
-  pTop: 18,
-  pSides: 6,
-  offSetTop: 12,
-  offSetLeft: 18,
-  // moveCount: 0,
-};
-
-
-// for (let c = 0; c < alien.colCount; c++) {
-//   aliens[c] = [];
-//   for (let r = 0; r < alien.rowCount; r++) {
-//     aliens[c][r] = {
-//       x: 0,
-//       y: 0,
-//       status: 2
-//     };
-//   }
-// }
-
-// function populateAlienArr() {
-//   for (let c = 0; c < alien.colCount; c++) {
-//     aliens[c] = [];
-//     for (let r = 0; r < alien.rowCount; r++) {
-//       let alienX = (c * (alien.w + alien.pSides) + alien.offSetLeft);
-//       let alienY = (r * (alien.h + alien.pTop) + alien.offSetTop);
-//       aliens[c].push({
-//         x: alienX,
-//         y: alienY,
-//         dir: 'r',
-//         speedY: 4,
-//         speedX: 4,
-//         status: 2
-//       });
-//     }
-//   }
-// }
-
-function populateAlienArr() {
-  //1D array version
-  //accesses global aliens array
-  let alienX = alien.offSetLeft;
-  let alienY = alien.offSetTop;
-  for (let i = 0; i < alien.totAliens; i++) {
-    aliens.push({
-      x: alienX,
-      y: alienY,
-      status: 2,
-      speedX: 1,
-      speedY: 4,
-      dir: 'r',
-    });
-    if ((i + 1) % alien.colCount === 0) {
-      alienX = alien.offSetLeft;
-      alienY += (alien.h + alien.pTop);
-    } else {
-      alienX += (alien.w + alien.pSides);
-    }
-  }
-}
-
-populateAlienArr();
 
 function drawAliens() {
   //for 1D array version
@@ -347,117 +568,87 @@ function drawAliens() {
       drawAlien(frame, aliens[i].x, aliens[i].y);
     } else if (aliens[i].status === 1) {
       drawRedAlien(frame, aliens[i].x, aliens[i].y);
-    }
-  }
-}
-
-// function drawAliens() {
-//   for (let i = 0; i < aliens.length; i++) {
-//     for (let j = 0; j < aliens[0].length; j++) {
-//       drawFrame(frame, aliens[i][j].x, aliens[i][j].y);
-//     }
-//   }
-// }
-
-// function drawAliens() {
-//   for (let c = 0; c < alien.colCount; c++) {
-//     for (let r = 0; r < alien.rowCount; r++) {
-//       let alienX = (c * (alien.w + alien.pSides) + alien.offSetLeft);
-//       let alienY = (r * (alien.h + alien.pTop) + alien.offSetTop);
-//       if (aliens[c][r].status >= 1) {
-//         aliens[c][r].x = alienX;
-//         aliens[c][r].y = alienY;
-//         drawFrame(frame, alienX, alienY);
-//       }
-//     }
-//   }
-// }
-
-// function collisionDetection() {
-//   //brick collisions
-//   for (let c = 0; c < brick.colCount; c++) {
-//     for (let r = 0; r < brick.rowCount; r++) {
-//       let b = bricks[c][r];
-//       for (let i = 0; i < lasers.length; i++) {
-//         if (b.status > 0 && lasers[i].y >= b.y && lasers[i].y <= b.y + brick.h && lasers[i].x+4 >= b.x && lasers[i].x <= b.x + brick.w) {
-//           if (b.status === 2) {
-//             lasers.splice(i, 1);
-//             b.status--;
-//             b.color = "red";
-//             // console.log(b);
-//           } else if (b.status === 1) {
-//             lasers.splice(i, 1);
-//             b.status--;
-//           }
-//         }
-//       }
-//     }
-//   }
-// }
-
-function collisionDetection() {
-  for (let i = 0; i < lasers.length; i++) {
-    let l = lasers[i];
-    //only check if lasers are >= height of lowest enemy
-    if (l.y <= aliens[aliens.length-1].y) {
-      console.log('At height');
-      for (let j = 0; j < aliens.length; j++) {
-        if (aliens[j].status > 0 && lasers[i].y >= aliens[j].y && lasers[i].y <= aliens[j].y + alien.h && lasers[i].x+4 >= aliens[j].x && lasers[i].x <= aliens[j].x + alien.w) {
-          console.log('It collided');
-          if (aliens[j].status === 2) {
-            lasers.splice(i, 1);
-            aliens[j].status--;
-            //change animation/color
-            break;
-          } else if (aliens[j].status === 1) {
-            lasers.splice(i, 1);
-            aliens[j].status--;
-            break;
-          }
-        }
+    } else if (aliens[i].status === 0) {
+      drawExplosion(explFrame, aliens[i].x, aliens[i].y);
+      //hacky solution - counts down from 20 giving it 2 frames at current frame rate
+      aliens[i].expl -= 1;
+      if (aliens[i].expl < 0) {
+        aliens.splice(i, 1);
       }
     }
   }
 }
 
-// function checkShieldCollision(shield, laser) {
-//   //used in check collision detection
-//   for (let c = 0; c < shield.length; c++) {
-//     for (let r = 0; r < shield.length; r++) {
-//       let s = shield[c][r];
-//       console.log(s);
-//       if (s.status > 0 && laser.x + laser.width >= s.x && laser.x <= s.x + s.totW && laser.y >= s.y && laser.y <= s.y + s.h) {
-//         //remove laser and shield component
-//         lasers.splice(i, 1);
-//         s.status--;
-//       }
-//     }
-//   }
-// }
-
-function draw() {
-  counter += 1;
-  if (counter % frameRate === 0) {
-    if (frame === 9) {
-      frame = 0;
-    } else {
-      frame += 1;
-    }
-  }
-
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  drawShip();
-  // drawShield(lShield);
-  // drawShield(mShield);
-  // drawShield(rShield);
-  checkL();
-  checkR();
-  drawLasers();
-  collisionDetection();
-  // moveBricks();
-  moveAliens();
-  drawAliens();
-  requestAnimationFrame(draw);
+function drawScore() {
+  ctx.font = "16px Arial";
+  ctx.fillStyle = "yellow";
+  ctx.fillText("Score: " + gst.score, 8, 20);
 }
 
-draw();
+function drawLives() {
+  ctx.font = "16px Arial";
+  ctx.fillStyle = "yellow";
+  ctx.fillText("Lives: " + gst.lives, canvas.width - 65, 20);
+}
+
+function drawShield() {
+  ctx.beginPath();
+  ctx.rect(shield.x, shield.y, shield.w, shield.h);
+  ctx.fillStyle = shield.color[shield.status-1];
+  ctx.fill();
+  ctx.closePath();
+}
+
+function drawBombs() {
+  if (bombs.length > 0) {
+    for (let i = 0; i < bombs.length; i++) {
+      ctx.beginPath();
+      ctx.arc(bombs[i].x, bombs[i].y, 10, 0, 2 * Math.PI);
+      ctx.fillStyle = 'white';
+      ctx.fill();
+      ctx.closePath();
+    }
+  }
+}
+
+function drawGame() {
+  ctx.drawImage(background, 0, 0);
+  drawShip();
+  drawLasers();
+  drawAliens();
+  drawBombs();
+  drawScore();
+  drawLives();
+  if (motherShip.isInitialized && motherShip.status > 0) {
+    drawMotherShip(alienShipFrame, motherShip.x);
+  }
+  if (shield.status > 0) {
+    drawShield();
+  }
+}
+
+//gameLoop and timimg variables
+let dt;
+let lastTime;
+
+function gameLoop() {
+  let now = Date.now();
+  dt = (now - lastTime);
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawGame();
+  update(dt);
+
+  lastTime = now;
+  if (!gst.isGameOver) {
+    requestAnimationFrame(gameLoop);
+  }
+}
+
+gameLoop();
+
+//plays sounds...
+function playSound(name) {
+  var audio = new Audio("sounds/" + name);
+  audio.play();
+}
