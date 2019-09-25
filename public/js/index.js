@@ -5,14 +5,14 @@ const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 
 //images
+const playerShip = new Image();
+playerShip.src = "images/playerShip.png";
+
 const alienShip = new Image();
-alienShip.src = "images/alienShip.png";
+alienShip.src = "images/alienShipwExplosion.png";
 
 const background = new Image();
 background.src = "images/pixelStarScape.png";
-
-const shipSprite = new Image();
-shipSprite.src = "images/ship64.png";
 
 const alienImage = new Image();
 alienImage.src = "images/alien.png";
@@ -28,22 +28,27 @@ const ship = {
 const lasers = [];
 let aliens = [];
 const alienLasers = [];
+//motherShip bombs
+let bombs = [];
 
 let counter = 0;
 let frameRate = 60 / 4;
+let playerShipFrame = 0;
+//used in alien animations
 let frame = 1;
-let explFrame = 1;
+//used in more precisely named animations
+let explFrame = 0;
 let alienShipFrame = 0;
+let alienMotherShipExplFrame = 7;
 
+//flag for motherShip
 let isAlienShipOut = false;
 
-const scale = 1;
+//width and height of animation frames, used in draw functions
 const w = 32;
 const h = 32;
-const scaledW = scale * w;
-const scaledH = scale * h;
 
-//game state
+//game state values
 const gst = {
   lives: 3,
   score: 0,
@@ -77,11 +82,13 @@ const shield = {
 
 //alien mother ship
 let motherShip = {
-  isOut: false,
   isInitialized: false,
-  status: 3
+  status: 3,
+  explInitialized: false,
+  explComplete: false
 };
 
+//flag for initializing mother ship once per round only
 let initializedThisRound = false;
 
 let mShipBombingPatterns = {
@@ -91,7 +98,11 @@ let mShipBombingPatterns = {
   6: [40, 240, 252, 290, 330, 370]
 };
 
-let bombs = [];
+//plays sounds...
+function playSound(name) {
+  var audio = new Audio("sounds/" + name);
+  audio.play();
+}
 
 //event handlers
 document.addEventListener('keydown', keyDownHandler, false);
@@ -301,16 +312,18 @@ function alienCollisionDetection() {
     //check motherShip collision if ship is out and if laser is at bottom of ship
     if (motherShip.isInitialized && l.y < 64) {
       if (l.x > motherShip.x && l.x < motherShip.x + 64) {
-
         lasers.splice(i, 1);
         motherShip.status--;
         console.log('You hit the motherShip');
         if (motherShip.status < 1) {
           gst.score += 100;
           motherShip.isInitialized = false;
-          if (gst.round % 2 == 0) {
-            gst.lives++;
-            playSound('extraGuy.wav');
+          gst.lives++;
+          playSound('extraGuy.wav');
+          //explosion exploAnimation
+          if (!motherShip.explInitialized) {
+            alienMotherShipExplFrame = 7;
+            motherShip.explInitialized = true;
           }
         }
       }
@@ -460,26 +473,32 @@ function checkForAliensCleared() {
 }
 
 function updateMotherShip() {
-  // console.log('x value: ' + motherShip.x);
-  // console.log('direction: ' + motherShip.dir);
-  if ((motherShip.x > -65 && motherShip.isInitialized) && (motherShip.x < canvas.width+1 && motherShip.isInitialized)) {
-    if (motherShip.dir === 'r') {
-      motherShip.x += 2;
-    } else {
-      motherShip.x -= 2;
-    }
-    //drop bombs
-    for (let i = 0; i < motherShip.bombPattern.length; i++) {
-      if (motherShip.bombPattern[i] === motherShip.x) {
-        bombs.push({
-          x: motherShip.x + 22,
-          y: 54
-        });
+    if ((motherShip.x > -65 && motherShip.isInitialized) && (motherShip.x < canvas.width+1 && motherShip.isInitialized)) {
+      if (motherShip.dir === 'r') {
+        motherShip.x += 2;
+      } else {
+        motherShip.x -= 2;
       }
+      //drop bombs
+      for (let i = 0; i < motherShip.bombPattern.length; i++) {
+        if (motherShip.status > 0 && motherShip.bombPattern[i] === motherShip.x) {
+          bombs.push({
+            x: motherShip.x + 22,
+            y: 54
+          });
+        }
+      }
+    } else {
+      //off screen - turn off isInitialized
+      motherShip.isInitialized = false;
     }
-  } else {
-    //off screen - turn off isInitialized
-    motherShip.isInitialized = false;
+}
+
+function updateMotherShipExpl() {
+  if (alienMotherShipExplFrame === 11 && motherShip.explInitialized) {
+    motherShip.explComplete = true;
+    motherShip.explInitialized = false;
+    console.log('It hit that point');
   }
 }
 
@@ -497,9 +516,11 @@ function moveBombs(dt) {
 function update(dt) {
   counter += 1;
   if (counter % frameRate === 0) {
+    (playerShipFrame === 1) ? playerShipFrame = 0 : playerShipFrame += 1;
     (frame === 9) ? frame = 0: frame += 1;
     (explFrame == 1) ? explFrame = 0: explFrame += 1;
     (alienShipFrame === 6) ? alienShipFrame = 0 : alienShipFrame += 1;
+    (alienMotherShipExplFrame === 12) ? alienMotherShipExplFrame = 7 : alienMotherShipExplFrame +=1;
     //increase speed based on number of aliens left
     newAlienLaser();
   }
@@ -510,19 +531,16 @@ function update(dt) {
   moveAlienLasers(dt);
   alienCollisionDetection();
   shipCollisionDetection();
-  bombCollisionDetection()
+  bombCollisionDetection();
   checkForGameOver();
   checkForAliensCleared();
+  updateMotherShipExpl();
   if (motherShip.isInitialized && motherShip.status > 0) {
     updateMotherShip();
   }
 }
 
 //drawGame functions
-function drawShip() {
-  ctx.drawImage(shipSprite, ship.x, ship.y);
-}
-
 function drawLasers() {
   //player lasers
   for (let i = 0; i < lasers.length; i++) {
@@ -542,23 +560,34 @@ function drawLasers() {
   }
 }
 
+function drawPlayerShip(frame, canvasX, canvasY) {
+  //used in draw aliens
+  ctx.drawImage(playerShip, frame * w, 0, w, h, canvasX, canvasY, 64, 64);
+}
+
 function drawAlien(frame, canvasX, canvasY) {
   //used in draw aliens
-  ctx.drawImage(alienImage, frame * w, 0, w, h, canvasX, canvasY, scaledW, scaledH);
+  ctx.drawImage(alienImage, frame * w, 0, w, h, canvasX, canvasY, w, h);
 }
 
 function drawMotherShip(frame, canvasX) {
   ctx.drawImage(alienShip, frame * w, 0, w, h, canvasX, 0, 64, 64);
 }
 
+function drawMotherShipExplosion(frame, canvasX, canvasY) {
+  if (motherShip.explInitialized && !motherShip.explComplete) {
+    ctx.drawImage(alienShip, frame * w, 0, w, h, canvasX, canvasY, 64, 64);
+  }
+}
+
 function drawRedAlien(frame, canvasX, canvasY) {
   //used in draw aliens
-  ctx.drawImage(alienRedImage, frame * w, 0, w, h, canvasX, canvasY, scaledW, scaledH);
+  ctx.drawImage(alienRedImage, frame * w, 0, w, h, canvasX, canvasY, w, h);
 }
 
 function drawExplosion(frame, canvasX, canvasY) {
   //used in draw aliens
-  ctx.drawImage(alienRedImage, frame * w, 32, w, h, canvasX, canvasY, scaledW, scaledH);
+  ctx.drawImage(alienRedImage, frame * w, 32, w, h, canvasX, canvasY, w, h);
 }
 
 function drawAliens() {
@@ -613,12 +642,14 @@ function drawBombs() {
 
 function drawGame() {
   ctx.drawImage(background, 0, 0);
-  drawShip();
+  // drawShip();
+  drawPlayerShip(playerShipFrame, ship.x, ship.y);
   drawLasers();
   drawAliens();
   drawBombs();
   drawScore();
   drawLives();
+  drawMotherShipExplosion(alienMotherShipExplFrame, motherShip.x, 0);
   if (motherShip.isInitialized && motherShip.status > 0) {
     drawMotherShip(alienShipFrame, motherShip.x);
   }
@@ -645,10 +676,34 @@ function gameLoop() {
   }
 }
 
-gameLoop();
-
-//plays sounds...
-function playSound(name) {
-  var audio = new Audio("sounds/" + name);
-  audio.play();
+//start screen functions
+function drawScreenOnce() {
+  let now = Date.now();
+  dt = (now - lastTime);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawGame();
+  update(dt);
+  lastTime = now;
 }
+
+function runGameLoop() {
+  gameLoop();
+}
+
+function drawStartMessage() {
+  ctx.font = "32px Arial";
+  ctx.fillStyle = "blue";
+  ctx.fillText("CLICK", 198, canvas.height / 2);
+  ctx.font = "32px Arial";
+  ctx.fillText("TO START", 170, canvas.height/2 + 34);
+}
+
+function startScreen() {
+  canvas.addEventListener('click', runGameLoop, {once: true});
+  drawGame();
+  drawStartMessage();
+}
+
+window.addEventListener('load', function() {
+  startScreen();
+});
